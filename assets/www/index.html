@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<!--
+Field Service Mobile Application
+Copyright 2013 Cory Cowgill Twitter: @corycowgill
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+-->
+
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0; user-scalable=no" />
+    <meta http-equiv="Content-type" content="text/html; charset=utf-8">
+
+    <!-- include jquery mobile -->
+    <link rel="stylesheet" href="jquery/jquery.mobile-1.3.1.min.css" />
+    <script src="jquery/jquery-1.8.3.min.js"></script>
+    <script src="jquery/jquery.mobile-1.3.1.min.js"></script>
+    <!-- Include cordova. -->
+	<script src="cordova-2.3.0.js"></script>
+    <!-- include local utility functionality -->
+    <script src="SFHybridApp.js"></script>
+    <!-- required for oauth plugin support -->    
+    <script src="SalesforceOAuthPlugin.js"></script>
+
+    <!-- include forcetk for REST transaction support -->
+    <script src="forcetk.js"></script>    
+    <script src="phonegap-nfc-0.4.1.js"></script>	
+    <!-- log window styling -->
+    <style>
+      .logWindow {display:none; width:700px;}
+      .logWindow > p {padding:0px; margin:0px; word-wrap:break-word;}
+    
+    </style>
+
+    <script>
+
+    
+    // The version of the REST API you wish to use in your app.
+    var apiVersion = "v23.0";
+    var userId = "";
+	// If you want to prevent dragging, uncomment this section
+	/*
+	function preventBehavior(e) 
+	{ 
+      e.preventDefault(); 
+    };
+	document.addEventListener("touchmove", preventBehavior, false);
+	*/
+	
+	/* If you are supporting your own protocol, the var invokeString will contain any arguments to the app launch.
+	see http://iphonedevelopertips.com/cocoa/launching-your-own-application-via-a-custom-url-scheme.html
+	for more details -jm */
+	/*
+	function handleOpenURL(url)
+	{
+		// do something with the url passed in.
+	}
+	*/
+
+    //Set Model Objects used across pages...
+    
+    var selectedCase;
+    var allCases = {};
+	
+    var canvas;
+    var context;
+    var drawingUtil;
+    var isDrawing = false;
+    
+    var forcetkClient;
+    var debugMode = true;
+    var logToConsole = cordova.require("salesforce/util/logger").logToConsole;
+
+    jQuery(document).ready(function() {
+        //Add event listeners and so forth here
+        logToConsole("onLoad: jquery ready");
+		document.addEventListener("deviceready", onDeviceReady,false);
+		
+		canvas = document.getElementById("signatureCanvas");
+		context = canvas.getContext("2d");
+		drawingUtil = new DrawingUtil(canvas);
+		
+		
+    });
+
+    // When this function is called, Cordova has been initialized and is ready to roll 
+    function onDeviceReady() {
+        logToConsole("onDeviceReady: Cordova ready");
+		//Call getAuthCredentials to get the initial session credentials
+        cordova.require("salesforce/plugin/oauth").getAuthCredentials(salesforceSessionRefreshed, getAuthCredentialsError);
+
+        //register to receive notifications when autoRefreshOnForeground refreshes the sfdc session
+        document.addEventListener("salesforceSessionRefresh",salesforceSessionRefreshed,false);
+
+        //Register our NFC Listener for when a NFC Tag is scanned.
+        //This would be the Serial Number Sticker on a Device the Field Service Agent is working on....
+        nfc.addNdefListener(
+       		 onNfcRead,
+                       successNFCRegisterListener,
+       	   	 errorNFCRegisterListener
+       		);
+        
+        //enable buttons
+        regLinkClickHandlers();
+        //getCurrentLatLong(); 
+    }
+  
+    function onNfcRead(nfcEvent)
+    {
+    	logToConsole(JSON.stringify(nfcEvent.tag)); // Debug Output in Console
+    	var tag = nfcEvent.tag;
+    	logToConsole('output:' + nfc.bytesToString(tag.ndefMessage[0].payload));
+    	queryCaseBySerial(nfc.bytesToString(tag.ndefMessage[0].payload).substring(3));
+    }
+    
+    
+    function successNFCRegisterListener(response)
+    {
+    	logToConsole('Success Registered');
+    }
+    
+    function errorNFCRegisterListener(response)
+    {
+    	logToConsole('Error Registered');
+    }
+
+    function salesforceSessionRefreshed(creds) {
+        logToConsole("salesforceSessionRefreshed");
+        userId = creds.userId;
+        // Depending on how we come into this method, `creds` may be callback data from the auth
+        // plugin, or an event fired from the plugin.  The data is different between the two.
+        var credsData = creds;
+        if (creds.data)  // Event sets the `data` object with the auth data.
+            credsData = creds.data;
+
+        forcetkClient = new forcetk.Client(credsData.clientId, credsData.loginUrl);
+        forcetkClient.setSessionToken(credsData.accessToken, apiVersion, credsData.instanceUrl);
+        forcetkClient.setRefreshToken(credsData.refreshToken);
+        forcetkClient.setUserAgentString(credsData.userAgent);
+        queryDayEvents();
+        //alert(creds);
+        //forcetkClient.setUserId(credsData.UserId);
+        //alert(JSON.Stringify(creds));
+        //forcetkClient.
+    }
+
+
+    function getAuthCredentialsError(error) {
+        logToConsole("getAuthCredentialsError: " + error);
+    }
+     
+    $( document ).delegate("#service-case-details", "pageinit", function() {
+    });
+
+    </script>
+        
+	<!-- load our app-specific code -->
+    <script src="inline.js"></script>       
+
+  </head>
+  <body>
+  	  <!-- Using Single Page JQUERY Model with Multiple Pages using AJAX (Keeping it Simple).... -->
+  	  <!--  Day View Page -->
+      <div data-role="page" data-theme="d" id="dayViewPage">
+	    <div data-role="panel" id="dayViewPanel">
+      		<!-- panel content goes here -->
+      		<h3><img src="images/preferences-system-4.png"/>   Service Center</h3>
+      		<div style="border-bottom:1px solid"><p><a href="#service-home">Cases</a></p></div>
+      		<div style="border-bottom:1px solid"><p><a href="#device-list">Devices</a></p></div>
+      		<div style="border-bottom:1px solid"><p><a href="#dayViewPage" onclick="javascript:queryDayEvents();">Day View</a></p></div>
+      		<div style="border-bottom:1px solid"><h3>Important Numbers</h3><p>Customer Service</p><p><a href="tel:1-800-555-9584">1-800-555-9584</a></p></div><p>Warehouse </p><p><a href="tel:1-800-555-4324">1-800-555-4324</a></p>
+    	</div><!-- /panel -->
+
+      	<div data-role="header">
+			<a href="#dayViewPanel" data-icon="bars" >Nav</a>
+      		<h1>Day View</h1>
+      	</div>
+      	<div data-role="content" id="dayViewContent">
+      		<div id='calendar'></div>
+      	</div>
+      </div>
+
+	  <!-- Cases List Page -->
+      <div data-role="page" data-theme="d" id="service-home" data-add-back-btn="true">
+ 	    <div data-role="panel" id="casesPanel">
+      		<!-- panel content goes here -->
+      		<h3><img src="images/preferences-system-4.png"/>   Service Center</h3>
+      		<div style="border-bottom:1px solid"><p><a href="#service-home">Cases</a></p></div>
+      		<div style="border-bottom:1px solid"><p><a href="#device-list">Devices</a></p></div>
+      		<div style="border-bottom:1px solid"><p><a href="#dayViewPage" onclick="javascript:queryDayEvents();">Day View</a></p></div>
+      		<div style="border-bottom:1px solid"><h3>Important Numbers</h3><p>Customer Service</p><p><a href="tel:1-800-555-9584">1-800-555-9584</a></p></div><p>Warehouse </p><p><a href="tel:1-800-555-4324">1-800-555-4324</a></p>
+    	</div><!-- /panel -->
+      	<div data-role="header" data-position="fixed">
+      		<a href="#casesPanel" data-icon="bars" >Nav</a>
+      		<h1>Cases</h1>  		
+      	</div>
+      	<!--  <p><a href="#" id="link_fetch_sfdc_cases" data-role="button" data-inline="true">Get Open Cases</a></p>-->
+      	<div data-role="content">
+      	    <div data-role="fieldcontain">
+				<label for="caseFilterList" class="select">Filter Cases:</label>
+				<select name="caseFilterList" id="caseFilterList">
+					<option value="allCases">All Cases</option>
+					<option value="allHighPriority">All High Priority</option>
+				</select>
+			</div>
+	      	<div id="div_device_case_list"></div>
+      	</div>
+      </div> 
+      <!-- Cases Detail Page -->
+      <div data-role="page" data-theme="d" id="service-case-details">
+ 	    <div data-role="panel" id="caseDetailsPanel">
+      		<!-- panel content goes here -->
+      		<h3><img src="images/preferences-system-4.png"/>   Service Center</h3>
+      		<div style="border-bottom:1px solid"><p><a href="#service-home">Cases</a></p></div>
+      		<div style="border-bottom:1px solid"><p><a href="#device-list">Devices</a></p></div>
+      		<div style="border-bottom:1px solid"><p><a href="#dayViewPage" onclick="javascript:queryDayEvents();">Day View</a></p></div>
+      		<div style="border-bottom:1px solid"><h3>Important Numbers</h3><p>Customer Service</p><p><a href="tel:1-800-555-9584">1-800-555-9584</a></p></div><p>Warehouse </p><p><a href="tel:1-800-555-4324">1-800-555-4324</a></p>
+    	</div><!-- /panel -->
+      	<div data-role="header" data-position="fixed">
+      		<a href="#caseDetailsPanel" data-icon="bars" >Nav</a>
+      		<h1>Case Detail</h1>
+      		<a href="#" data-icon="check" id="caseSaveButton">Save</a>
+      	</div>
+      	<div data-role="content" id="case-details_content">
+      	</div>
+      </div>
+      
+      <!-- Device List Page -->
+      <div data-role="page" data-theme="d" id="device-list">
+ 	    <div data-role="panel" id="devicesPanel">
+      		<!-- panel content goes here -->
+      		<h3><img src="images/preferences-system-4.png"/>   Service Center</h3>
+      		<div style="border-bottom:1px solid"><p><a href="#service-home">Cases</a></p></div>
+      		<div style="border-bottom:1px solid"><p><a href="#device-list">Devices</a></p></div>
+      		<div style="border-bottom:1px solid"><p><a href="#dayViewPage" onclick="javascript:queryDayEvents();">Day View</a></p></div>
+      		<div style="border-bottom:1px solid"><h3>Important Numbers</h3><p>Customer Service</p><p><a href="tel:1-800-555-9584">1-800-555-9584</a></p></div><p>Warehouse </p><p><a href="tel:1-800-555-4324">1-800-555-4324</a></p>
+    	</div><!-- /panel -->
+      	<div data-role="header" data-position="fixed">
+      		<a href="#devicesPanel" data-icon="bars" >Nav</a>
+      		<h1>Devices</h1>
+      	</div>
+      	<div data-role="content" id="device-list_content">
+      		<div data-role="fieldcontain">
+      			<label for="serailSearch">Serial Number:</label>
+    			<input type="text" name="serialSearch" id="serialSearch" value=""  />
+    			<a href="" data-role="button" id="searchDevicesButton" data-icon="search">Find Devices</a>
+      		</div>
+      		<div id="div_device_devices_list"></div>
+      	</div>
+      </div> 
+      <!-- Device Details Page -->
+      <div data-role="page" data-theme="d" id="device-details">
+      	<div data-role="header" data-position="fixed">
+      		<h1>Device Details</h1>
+      	</div>
+      	<div data-role="content" id="instrument-details_content">
+      	</div>
+      </div>
+      
+      <!-- Customer Signature Page for HTML5 Canvas -->  
+      <div data-role="page" data-theme="d" id="customerSignaturePage">
+	  	<div data-role="header" data-position="fixed">
+      		<a href="#service-home" data-transition='slide' data-icon="check">Back</a>
+      		<h1>Signature</h1>
+      		<a href="#" data-icon="check" id="sigSaveButton">Save</a>
+      	</div>
+      	<canvas id="signatureCanvas" height="400px" width="275px">
+      </div>
+  </body>
+</html>
